@@ -1,18 +1,25 @@
 import os
 import pandas as pd
-import common
 import multiprocessing as mp
 import mplfinance as mpf
 from termcolor import colored
 
-__generated_charts_dir = "__generated_chart_data__\\intraday_charts_with_indicators"
+__input_dir = "input_raw_chart_data\\intraday_charts"
+__output_dir = "output_generated_chart_data\\intraday_charts_with_indicators"
+
+
+def get_list_of_symbols_with_intraday_chart():
+    symbols = []
+    for root, dirs, files in os.walk(__input_dir + "\\", topdown=False):
+        for name in dirs:
+            symbols.append(name)
+    return symbols
 
 
 def show_1min_chart_ms(symbol, date):
     date = date.replace("-", "")
-    path = __generated_charts_dir + "\\" + symbol + "\\" + symbol + "_" + date + ".csv"
+    path = __output_dir + "\\" + symbol + "\\" + symbol + "_" + date + ".csv"
 
-    df = None
     if os.path.isfile(path):
         df = pd.read_csv(path)
         df.Time = pd.to_datetime(df.Time, format="%Y-%m-%d  %H:%M:%S")
@@ -32,10 +39,10 @@ def show_1min_chart_ms(symbol, date):
 
 
 def _generate_indicators(symbol, file):
-    path = common.__intraday_charts_dir + "\\" + symbol + "\\" + file
+    path = __input_dir + "\\" + symbol + "\\" + file
 
-    result_file = __generated_charts_dir + "\\" + symbol + "\\" + file
-    result_dir = __generated_charts_dir + "\\" + symbol
+    result_file = __output_dir + "\\" + symbol + "\\" + file
+    result_dir = __output_dir + "\\" + symbol
 
     if not os.path.isdir(result_dir):
         try:
@@ -44,7 +51,7 @@ def _generate_indicators(symbol, file):
             print("Creation of the directory %s failed" % result_dir)
 
     if os.path.isfile(result_file):
-        print("Already generated.")
+        print(result_file, " Already generated.")
     else:
 
         df = pd.read_csv(path)
@@ -134,8 +141,8 @@ def _generate_indicators(symbol, file):
         df['mav13'] = df['Close'].rolling(window=13).mean()
         df['mav21'] = df['Close'].rolling(window=21).mean()
 
-        print(path, "    >>>>    ", result_file, flush=True)
         df.to_csv(result_file)
+        print(result_file, flush=True)
 
     return 1
 
@@ -143,12 +150,12 @@ def _generate_indicators(symbol, file):
 def add_metrics_to_intraday_charts():
     params = []
 
-    symbols = common.get_list_of_symbols_with_intraday_chart()
+    symbols = get_list_of_symbols_with_intraday_chart()
 
     print("Creating list of intraday chart files")
 
     for symbol in symbols:
-        dir_path = common.__intraday_charts_dir + "\\" + symbol
+        dir_path = __input_dir + "\\" + symbol
         if os.path.isdir(dir_path):
             for file in os.listdir(dir_path):
                 if file.endswith(".csv"):
@@ -167,7 +174,7 @@ def add_metrics_to_intraday_charts():
 def save_intraday_data(symbol, filename, df):
     if len(df) > 0:
 
-        dir_path = __generated_charts_dir + "\\" + symbol
+        dir_path = __output_dir + "\\" + symbol
         if not os.path.isdir(dir_path):
             try:
                 os.mkdir(dir_path)
