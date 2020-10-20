@@ -3,16 +3,23 @@ import pandas as pd
 import multiprocessing as mp
 import mplfinance as mpf
 from termcolor import colored
+import sys
 
 __input_dir = "input_raw_chart_data\\intraday_charts"
 __output_dir = "output_generated_chart_data\\intraday_charts_with_indicators"
+__output_dir_root = "output_generated_chart_data"
 
 
 def get_list_of_symbols_with_intraday_chart():
     symbols = []
-    for root, dirs, files in os.walk(__input_dir + "\\", topdown=False):
-        for name in dirs:
-            symbols.append(name)
+
+    if os.path.isdir(__input_dir):
+        for root, dirs, files in os.walk(__input_dir + "\\", topdown=False):
+            for name in dirs:
+                symbols.append(name)
+    else:
+        print(colored(__input_dir + ' not found!', color='yellow'))
+
     return symbols
 
 
@@ -48,17 +55,17 @@ def _generate_indicators(symbol, file):
         try:
             os.mkdir(result_dir)
         except OSError:
-            print("Creation of the directory %s failed" % result_dir)
+            print("Creation of the directory %s failed" % result_dir, flush=True)
 
     if os.path.isfile(result_file):
-        print(result_file, " Already generated.")
+        print(result_file, " Already generated.", flush=True)
     else:
 
         df = pd.read_csv(path)
 
         df_range = pd.DataFrame(columns=['idx', 'range'])
 
-        atr = []
+        tr = []
         vwap = []
         cur_vol = []
         num_vol_lower = []
@@ -99,23 +106,9 @@ def _generate_indicators(symbol, file):
             num_vol_lower.append(cnt)
 
             ####################################################################
-            # ATR
-            atr_length = 9
+            # TR
 
-            j = i - atr_length
-            if j < 0:
-                j = 0
-            m = 0
-            sm = 0
-            while 0 < j < i:
-                sm = sm + df.loc[j]['High'] - df.loc[j]['Low']
-                j = j + 1
-                m = m + 1
-
-            if m > 0:
-                atr.append(sm / m)
-            else:
-                atr.append(0)
+            tr.append(df.loc[j]['High'] - df.loc[j]['Low'])
 
         ##################################################################
         # Range Score Continued ...
@@ -128,18 +121,28 @@ def _generate_indicators(symbol, file):
             range_score[int(df_range.iloc[i]['idx'])] = int(100 * i / n)
 
         df["range_score"] = range_score
-        df["atr"] = atr
         df["vol_high_count"] = num_vol_lower
         df["vwap"] = vwap
         df["current_volume"] = cur_vol
+        df["trading_range"] = tr
+
+        df["atr3"] = df["trading_range"].rolling(window=3).mean()
+        df["atr5"] = df["trading_range"].rolling(window=5).mean()
+        df["atr8"] = df["trading_range"].rolling(window=8).mean()
+        df["atr13"] = df["trading_range"].rolling(window=13).mean()
 
         df['mav3'] = df['Close'].rolling(window=3).mean()
-        df['mav4'] = df['Close'].rolling(window=4).mean()
         df['mav5'] = df['Close'].rolling(window=5).mean()
         df['mav8'] = df['Close'].rolling(window=8).mean()
         df['mav9'] = df['Close'].rolling(window=9).mean()
         df['mav13'] = df['Close'].rolling(window=13).mean()
         df['mav21'] = df['Close'].rolling(window=21).mean()
+
+        df['vmav3'] = df['Volume'].rolling(window=3).mean()
+        df['vmav5'] = df['Volume'].rolling(window=5).mean()
+        df['vmav8'] = df['Volume'].rolling(window=8).mean()
+        df['vmav13'] = df['Volume'].rolling(window=13).mean()
+        df['vmav21'] = df['Volume'].rolling(window=21).mean()
 
         df.to_csv(result_file)
         print(result_file, flush=True)
@@ -147,12 +150,28 @@ def _generate_indicators(symbol, file):
     return 1
 
 
+def check_and_create_output_directories():
+    if not os.path.isdir(__output_dir_root):
+        try:
+            os.mkdir(__output_dir_root)
+        except OSError:
+            print("Creation of the directory %s failed" % __output_dir_root)
+
+    if not os.path.isdir(__output_dir):
+        try:
+            os.mkdir(__output_dir)
+        except OSError:
+            print("Creation of the directory %s failed" % __output_dir)
+
+
 def add_metrics_to_intraday_charts():
     params = []
 
-    symbols = get_list_of_symbols_with_intraday_chart()
+    check_and_create_output_directories()
 
-    print("Creating list of intraday chart files")
+    print("Creating list of intraday chart files ... ")
+
+    symbols = get_list_of_symbols_with_intraday_chart()
 
     for symbol in symbols:
         dir_path = __input_dir + "\\" + symbol
@@ -161,27 +180,38 @@ def add_metrics_to_intraday_charts():
                 if file.endswith(".csv"):
                     params.append([symbol, file])
 
-    print("\nNum CPUs: ", mp.cpu_count())
+    print("Found", len(params), "input files")
 
-    pool = mp.Pool(mp.cpu_count())
-    for param in params:
-        pool.apply_async(_generate_indicators, args=(param[0], param[1]))
+    if len(params) > 0:
 
-    pool.close()
-    pool.join()
+        print("\nNum CPUs: ", mp.cpu_count())
 
+        ''' THIS DOES NOT WORK ...
+        
+        result_objs = []
+        with mp.Pool(processes=mp.cpu_count()) as pool:
+            for param in params:
+                result = pool.apply_async(_generate_indicators, args=(param[0], param[1]))
+                result_objs.append(result)
 
-def save_intraday_data(symbol, filename, df):
-    if len(df) > 0:
+            results = [result.get() for result in result_objs]
+        '''
 
-        dir_path = __output_dir + "\\" + symbol
-        if not os.path.isdir(dir_path):
-            try:
-                os.mkdir(dir_path)
-            except OSError:
-                print("Creation of the directory %s failed" % dir_path)
+        ##################################################################
+        # Used for debugging Single process ... to see errors
+        '''
+        for param in params:
+            _generate_indicators(param[0], param[1])
 
-        df.to_csv(filename, index=False)
+        '''
+        ###################################################################
+
+        pool = mp.Pool(mp.cpu_count())
+        for param in params:
+            pool.apply_async(_generate_indicators, args=(param[0], param[1]))
+
+        pool.close()
+        pool.join()
 
 
 def main():
